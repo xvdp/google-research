@@ -2,9 +2,10 @@ numpy
 matplotlib
 tensorflow
 tensorflow_datasets
-jax==0.4.13
-jaxlib==0.4.13
+jax
+jaxlib
 pillow
-flax==0.5.3
+flax
+optax
 ml_collections
 clu

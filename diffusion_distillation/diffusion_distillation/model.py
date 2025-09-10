@@ -29,19 +29,24 @@ from . import unet
 from . import utils
 from absl import logging
 import flax
+from flax.training import train_state as flax_train_state
+import optax
 import jax
 import jax.numpy as jnp
 import ml_collections
 import numpy as onp
 
 
-@flax.struct.dataclass
-class TrainState:
-  step: int
-  optimizer: Union[flax.optim.Optimizer, None]
-  ema_params: Any
-  num_sample_steps: int
+# @flax.struct.dataclass
+# class TrainState:
+#   step: int
+#   optimizer: Union[flax.optim.Optimizer, None]
+#   ema_params: Any
+#   num_sample_steps: int
 
+class TrainState(flax_train_state.TrainState):
+  ema_params: Any = None
+  num_sample_steps: int = 0
 
 class Model:
   """Diffusion model."""
@@ -102,11 +107,18 @@ class Model:
 
     # For ema_params below, copy so that pmap buffer donation doesn't donate the
     # same buffer twice
-    return TrainState(
-        step=0,
-        optimizer=optimizer_def.create(init_params),
+    # return TrainState(
+    #     step=0,
+    #     optimizer=optimizer_def.create(init_params),
+    #     ema_params=utils.copy_pytree(init_params),
+    #     num_sample_steps=self.config.model.train_num_steps)
+    return TrainState.create(
+        apply_fn=self.model.apply,
+        params=init_params,
+        tx=optimizer_def,
         ema_params=utils.copy_pytree(init_params),
-        num_sample_steps=self.config.model.train_num_steps)
+        num_sample_steps=self.config.model.train_num_steps
+    )
 
   def load_teacher_state(self, ckpt_path=None):
     """Load teacher state and fix flax version incompatibilities."""
@@ -213,9 +225,15 @@ class Model:
       if learning_rate_mult != 1:
         learning_rate *= learning_rate_mult
 
+
+      # Optax: update state with gradients
+      updates, new_opt_state = state.tx.update(grad, state.opt_state, state.params)
+      new_params = optax.apply_updates(state.params, updates)
+
       # Update optimizer and EMA params
-      new_optimizer = state.optimizer.apply_gradient(
-          grad, learning_rate=learning_rate)
+    #   new_optimizer = state.optimizer.apply_gradient(
+    #       grad, learning_rate=learning_rate)
+    
       if hasattr(config.train, 'ema_decay'):
         ema_decay = config.train.ema_decay
       elif config.train.avg_type == 'ema':
@@ -228,20 +246,26 @@ class Model:
       else:
         raise NotImplementedError(config.train.avg_type)
       if ema_decay == 0:
-        new_ema_params = new_optimizer.target
+        new_ema_params = new_params
+        # new_ema_params = new_optimizer.target
       else:
         new_ema_params = utils.apply_ema(
             decay=jnp.where(step == 0, 0.0, ema_decay),
             avg=state.ema_params,
-            new=new_optimizer.target)
-      new_state = state.replace(  # pytype: disable=attribute-error
+            new=new_params)
+      new_state = state.replace(
           step=step + 1,
-          optimizer=new_optimizer,
+          params=new_params,
+          opt_state=new_opt_state,
           ema_params=new_ema_params)
+    #   new_state = state.replace(  # pytype: disable=attribute-error
+    #       step=step + 1,
+    #       optimizer=new_optimizer,
+    #       ema_params=new_ema_params)
       if config.train.get('enable_update_skip', True):
         # Apply update if the new optimizer state is all finite
         ok = jnp.all(jnp.asarray([
-            jnp.all(jnp.isfinite(p)) for p in jax.tree.leaves(new_optimizer)]))
+            jnp.all(jnp.isfinite(p)) for p in jax.tree.leaves(new_params)]))
         new_state_no_update = state.replace(step=step + 1)
         state = jax.tree.map(
             lambda a, b: jnp.where(ok, a, b), new_state, new_state_no_update)
@@ -317,31 +341,63 @@ class Model:
     assert unnormalized_samples.shape == dummy_x.shape
     return unnormalized_samples
 
-  def make_optimizer_def(self):
-    """Make the optimizer def."""
-    config = self.config
 
+  def make_optimizer_def(self):
+    """Make the optimizer def using Optax."""
+    config = self.config
     optimizer_kwargs = {}
     if config.train.weight_decay > 0.:
       optimizer_kwargs['weight_decay'] = config.train.weight_decay
 
     if config.train.optimizer == 'adam':
-      optimizer_def = flax.optim.Adam(
-          **optimizer_kwargs,
-          beta1=config.train.get('adam_beta1', 0.9),
-          beta2=config.train.get('adam_beta2', 0.999))
+      optimizer_def = optax.adamw(
+          learning_rate=config.train.learning_rate,
+          b1=config.train.get('adam_beta1', 0.9),
+          b2=config.train.get('adam_beta2', 0.999),
+          weight_decay=optimizer_kwargs.get('weight_decay', 0.0)
+      )
     elif config.train.optimizer == 'momentum':
-      optimizer_def = flax.optim.Momentum(
-          **optimizer_kwargs,
-          beta=config.train.get('optimizer_beta', 0.9))
+      optimizer_def = optax.sgd(
+          learning_rate=config.train.learning_rate,
+          momentum=config.train.get('optimizer_beta', 0.9),
+          nesterov=False
+      )
     elif config.train.optimizer == 'nesterov':
-      optimizer_def = flax.optim.Momentum(
-          **optimizer_kwargs,
-          beta=config.train.get('optimizer_beta', 0.9),
-          nesterov=True)
+      optimizer_def = optax.sgd(
+          learning_rate=config.train.learning_rate,
+          momentum=config.train.get('optimizer_beta', 0.9),
+          nesterov=True
+      )
     else:
       raise NotImplementedError(f'Unknown optimizer: {config.train.optimizer}')
 
     return optimizer_def
+  
+#   def make_optimizer_def(self):
+#     """Make the optimizer def."""
+#     config = self.config
+
+#     optimizer_kwargs = {}
+#     if config.train.weight_decay > 0.:
+#       optimizer_kwargs['weight_decay'] = config.train.weight_decay
+
+#     if config.train.optimizer == 'adam':
+#       optimizer_def = flax.optim.Adam(
+#           **optimizer_kwargs,
+#           beta1=config.train.get('adam_beta1', 0.9),
+#           beta2=config.train.get('adam_beta2', 0.999))
+#     elif config.train.optimizer == 'momentum':
+#       optimizer_def = flax.optim.Momentum(
+#           **optimizer_kwargs,
+#           beta=config.train.get('optimizer_beta', 0.9))
+#     elif config.train.optimizer == 'nesterov':
+#       optimizer_def = flax.optim.Momentum(
+#           **optimizer_kwargs,
+#           beta=config.train.get('optimizer_beta', 0.9),
+#           nesterov=True)
+#     else:
+#       raise NotImplementedError(f'Unknown optimizer: {config.train.optimizer}')
+
+#     return optimizer_def
 
 
