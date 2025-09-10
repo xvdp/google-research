@@ -5,6 +5,6 @@ tensorflow_datasets
 jax
 jaxlib
 pillow
-flax
+flax==0.5.3
 ml_collections
 clu
