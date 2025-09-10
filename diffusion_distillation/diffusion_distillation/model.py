@@ -116,7 +116,7 @@ class Model:
   def load_teacher_state(self, ckpt_path=None):
     """Load teacher state and fix flax version incompatibilities."""
     teacher_state = jax.device_get(
-        self.make_init_state().replace(optimizer=None))
+        self.make_init_state().replace(tx=None))
     if ckpt_path is None:
       ckpt_path = self.config.distillation.teacher_checkpoint_path
     loaded_state = checkpoints.restore_from_path(ckpt_path, target=None)
