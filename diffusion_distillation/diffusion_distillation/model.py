@@ -37,13 +37,6 @@ import ml_collections
 import numpy as onp
 
 
-# @flax.struct.dataclass
-# class TrainState:
-#   step: int
-#   optimizer: Union[flax.optim.Optimizer, None]
-#   ema_params: Any
-#   num_sample_steps: int
-
 class TrainState(flax_train_state.TrainState):
   ema_params: Any = None
   num_sample_steps: int = 0
@@ -209,11 +202,10 @@ class Model:
     loss_fn = functools.partial(self.loss_fn, next(rng), train, batch)
 
     if train:
-      if state.optimizer is None:
-        raise ValueError('Optimizer is None')
-      # Training mode
+      if state.params is None:
+        raise ValueError('Params are None')
       (_, metrics), grad = jax.value_and_grad(loss_fn, has_aux=True)(
-          state.optimizer.target)
+          state.params)
 
       # Average grad across shards
       grad, metrics['gnorm'] = utils.clip_by_global_norm(
@@ -229,10 +221,6 @@ class Model:
       # Optax: update state with gradients
       updates, new_opt_state = state.tx.update(grad, state.opt_state, state.params)
       new_params = optax.apply_updates(state.params, updates)
-
-      # Update optimizer and EMA params
-    #   new_optimizer = state.optimizer.apply_gradient(
-    #       grad, learning_rate=learning_rate)
     
       if hasattr(config.train, 'ema_decay'):
         ema_decay = config.train.ema_decay
@@ -258,10 +246,7 @@ class Model:
           params=new_params,
           opt_state=new_opt_state,
           ema_params=new_ema_params)
-    #   new_state = state.replace(  # pytype: disable=attribute-error
-    #       step=step + 1,
-    #       optimizer=new_optimizer,
-    #       ema_params=new_ema_params)
+
       if config.train.get('enable_update_skip', True):
         # Apply update if the new optimizer state is all finite
         ok = jnp.all(jnp.asarray([
