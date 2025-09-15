@@ -41,6 +41,13 @@ class TrainState(flax_train_state.TrainState):
   ema_params: Any = None
   num_sample_steps: int = 0
 
+@flax.struct.dataclass
+class TrainStateProxy:
+  step: int
+  optimizer: Any
+  ema_params: Any
+  num_sample_steps: int
+
 class Model:
   """Diffusion model."""
 
@@ -132,9 +139,9 @@ class Model:
       num_sample_steps = loaded_state['num_sample_steps']
     else:
       num_sample_steps = self.config.distillation.start_num_steps
-    self.teacher_state = TrainState(
+    self.teacher_state = TrainStateProxy(
         step=0,  # reset number of steps
-        tx=None,
+        optimizer=None,
         ema_params=teacher_params,
         num_sample_steps=num_sample_steps,
         )
