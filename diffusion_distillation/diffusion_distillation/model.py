@@ -38,11 +38,13 @@ import numpy as onp
 
 
 class TrainState(flax_train_state.TrainState):
+  """modified TrainState to work with jax/flax > 0.4.1"""
   ema_params: Any = None
   num_sample_steps: int = 0
 
 @flax.struct.dataclass
 class TrainStateProxy:
+  """ old TrainState class only for loading"""
   step: int
   optimizer: Any
   ema_params: Any
@@ -105,13 +107,6 @@ class Model:
     # Make the optimizer
     optimizer_def = self.make_optimizer_def()
 
-    # For ema_params below, copy so that pmap buffer donation doesn't donate the
-    # same buffer twice
-    # return TrainState(
-    #     step=0,
-    #     optimizer=optimizer_def.create(init_params),
-    #     ema_params=utils.copy_pytree(init_params),
-    #     num_sample_steps=self.config.model.train_num_steps)
     return TrainState.create(
         apply_fn=self.model.apply,
         params=init_params,
@@ -335,7 +330,7 @@ class Model:
 
 
   def make_optimizer_def(self):
-    """Make the optimizer def using Optax."""
+    """Make the optimizer def using Optax. replaces deprecated flax.optim."""
     config = self.config
     optimizer_kwargs = {}
     if config.train.weight_decay > 0.:
@@ -371,32 +366,3 @@ class Model:
       raise NotImplementedError(f'Unknown optimizer: {config.train.optimizer}')
 
     return optimizer_def
-  
-#   def make_optimizer_def(self):
-#     """Make the optimizer def."""
-#     config = self.config
-
-#     optimizer_kwargs = {}
-#     if config.train.weight_decay > 0.:
-#       optimizer_kwargs['weight_decay'] = config.train.weight_decay
-
-#     if config.train.optimizer == 'adam':
-#       optimizer_def = flax.optim.Adam(
-#           **optimizer_kwargs,
-#           beta1=config.train.get('adam_beta1', 0.9),
-#           beta2=config.train.get('adam_beta2', 0.999))
-#     elif config.train.optimizer == 'momentum':
-#       optimizer_def = flax.optim.Momentum(
-#           **optimizer_kwargs,
-#           beta=config.train.get('optimizer_beta', 0.9))
-#     elif config.train.optimizer == 'nesterov':
-#       optimizer_def = flax.optim.Momentum(
-#           **optimizer_kwargs,
-#           beta=config.train.get('optimizer_beta', 0.9),
-#           nesterov=True)
-#     else:
-#       raise NotImplementedError(f'Unknown optimizer: {config.train.optimizer}')
-
-#     return optimizer_def
-
-
