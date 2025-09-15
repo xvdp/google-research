@@ -134,7 +134,7 @@ class Model:
       num_sample_steps = self.config.distillation.start_num_steps
     self.teacher_state = TrainState(
         step=0,  # reset number of steps
-        optimizer=None,
+        tx=None,
         ema_params=teacher_params,
         num_sample_steps=num_sample_steps,
         )
@@ -335,12 +335,19 @@ class Model:
       optimizer_kwargs['weight_decay'] = config.train.weight_decay
 
     if config.train.optimizer == 'adam':
-      optimizer_def = optax.adamw(
-          learning_rate=config.train.learning_rate,
-          b1=config.train.get('adam_beta1', 0.9),
-          b2=config.train.get('adam_beta2', 0.999),
-          weight_decay=optimizer_kwargs.get('weight_decay', 0.0)
-      )
+      if config.train.weight_decay > 0.:
+        optimizer_def = optax.adamw(
+            learning_rate=config.train.learning_rate,
+            b1=config.train.get('adam_beta1', 0.9),
+            b2=config.train.get('adam_beta2', 0.999),
+            weight_decay=optimizer_kwargs.get('weight_decay', 0.0)
+        )
+      else:
+        optimizer_def = optax.adam(
+            learning_rate=config.train.learning_rate,
+            b1=config.train.get('adam_beta1', 0.9),
+            b2=config.train.get('adam_beta2', 0.999),
+        )
     elif config.train.optimizer == 'momentum':
       optimizer_def = optax.sgd(
           learning_rate=config.train.learning_rate,
