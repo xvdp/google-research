@@ -1,0 +1,7 @@
+python==3.10
+numpy<=1.26.4
+opencv-python<=4.11.0.86
+jax==0.4.1
+jaxlib==0.4.1
+flax==0.4.1
+tensorflow

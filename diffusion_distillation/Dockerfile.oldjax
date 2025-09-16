@@ -1,0 +1,35 @@
+## trying to revive old project is useless,
+# jax and jaxlib functions have been updated. but flax and optax have not. fully
+
+FROM nvidia/cuda:11.2.2-cudnn8-devel-ubuntu20.04
+# Install basic tools and system dependencies
+RUN ln -fs /usr/share/zoneinfo/America/New_York /etc/localtime  && \
+    apt-get update && apt-get install -y \
+    git tree ffmpeg wget build-essential cmake ninja-build \
+    python3 python3-venv python3-dev python3-pip nano\
+    && rm -rf /var/lib/apt/lists/*
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=$CUDA_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+# COPY ./diffusion_distillation/requirements.txt /requirements.txt
+# RUN pip install --no-cache-dir -r /requirements.txt
+COPY ./constraints.txt /constraints.txt
+RUN pip install --no-cache-dir jaxlib==0.4.1+cuda11.cudnn805 -f https://storage.googleapis.com/jax-releases/jax_releases.html -c /constraints.txt
+RUN pip install --no-cache-dir jax==0.4.1 flax==0.4.1 -c /constraints.txt
+RUN pip install tensorflow -c /constraints.txt
+RUN pip install tensorflow_datasets clu ml_collections jupyter 
+
+# permit jupyter
+ARG port=32778
+EXPOSE $port
+ENV PORT=$port
+RUN echo "alias jupy='jupyter notebook --allow-root -y --no-browser --ip=0.0.0.0 --port=${PORT}'" >> ~/.bashrc
+
+# docker build --build-arg DOCKERFILE="$(pwd)/Dockerfile.oldjax" -f Dockerfile.oldjax . -t google_research/xvdp/diffusion_distillation:jax0.4.1
+# docker inspect --format='{{index .Config.Labels "dockerfile"}}' google_research/xvdp/diffusion_distillation:jax0.4.1
+ARG DOCKERFILE
+LABEL dockerfile="${DOCKERFILE}"
+
+COPY ./run_oldjax.sh /run_oldjax.sh
+COPY ./run_oldjax.py /run_oldjax.py
+CMD ["/bin/bash"]
